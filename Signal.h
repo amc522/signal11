@@ -5,6 +5,7 @@
 #include <vector>
 #include <assert.h>
 #include <memory>
+#include <algorithm>
 
 namespace Signal11 {
 
@@ -105,7 +106,7 @@ namespace Signal11 {
 		ConnectionRef(const std::shared_ptr<Lib::ProtoSignalLink> &head, Lib::ProtoSignalLink *link)
 			:_head(head), _link(link)
 		{
-			assert(link != nullptr);
+			assert((head == nullptr && link == nullptr) || (head != nullptr && link != nullptr));
 		}
 
 		ConnectionRef(ConnectionRef &&other)
@@ -120,6 +121,10 @@ namespace Signal11 {
 			std::swap(_head, other._head);
 
 			return *this;
+		}
+
+		bool operator==(const ConnectionRef &other) {
+			return _link == other._link;
 		}
 
 		bool disconnect() {
@@ -156,6 +161,11 @@ namespace Signal11 {
 
 	class ScopedConnectionRef : public ConnectionRef {
 	public:
+		ScopedConnectionRef()
+			:ConnectionRef(nullptr, nullptr)
+		{
+		}
+
 		ScopedConnectionRef(const ConnectionRef &ref)
 			:ConnectionRef(ref)
 		{
@@ -180,6 +190,18 @@ namespace Signal11 {
 
 			return *this;
 		}
+
+		bool operator==(const ScopedConnectionRef &other) {
+			return ConnectionRef::operator==(other);
+		}
+
+		bool operator==(const ConnectionRef &other) {
+			return ConnectionRef::operator==(other);
+		}
+
+		ConnectionRef release() {
+			return std::move(static_cast<ConnectionRef&>(*this));
+		}
 		
 	private:
 		ScopedConnectionRef(const ScopedConnectionRef &other)
@@ -190,22 +212,109 @@ namespace Signal11 {
 	
 	class ConnectionScope {
 	public:
-		ConnectionRef& operator+=(const ConnectionRef &ref) {
+		ScopedConnectionRef& operator+=(const ConnectionRef &ref) {
+			return insert(ref);
+		}
+
+		ScopedConnectionRef& operator+=(ConnectionRef &&ref) {
+			return insert(std::move(ref));
+		}
+
+		ScopedConnectionRef& operator+=(ScopedConnectionRef &&ref) {
+			return insert(std::move(ref));
+		}
+
+		bool operator-=(const ConnectionRef &ref) {
+			return remove(ref);
+		}
+
+		bool operator -=(const ScopedConnectionRef &ref) {
+			return remove(ref);
+		}
+
+		ScopedConnectionRef& insert(const ConnectionRef &ref) {
 			_connections.push_back(ref);
-
 			return _connections.back();
 		}
 
-		ConnectionRef& operator+=(ConnectionRef &&ref) {
+		ScopedConnectionRef& insert(ConnectionRef &&ref) {
 			_connections.push_back(std::move(ref));
-
 			return _connections.back();
 		}
 
-		ConnectionRef& operator+=(ScopedConnectionRef &&ref) {
+		ScopedConnectionRef& insert(ScopedConnectionRef &&ref) {
 			_connections.push_back(std::move(ref));
-
 			return _connections.back();
+		}
+
+		bool remove(const ConnectionRef &ref) {
+			auto itr = std::find(std::begin(_connections), std::end(_connections), ref);
+
+			if(itr != std::end(_connections)) {
+				_connections.erase(itr);
+				return true;
+			}
+
+			return false;
+		}
+
+		bool remove(const ScopedConnectionRef &ref) {
+			auto itr = std::find(std::begin(_connections), std::end(_connections), ref);
+
+			if(itr != std::end(_connections)) {
+				_connections.erase(itr);
+				return true;
+			}
+
+			return false;
+		}
+
+		bool remove(const ConnectionRef &ref, ScopedConnectionRef &ret) {
+			auto itr = std::find(std::begin(_connections), std::end(_connections), ref);
+
+			if(itr != std::end(_connections)) {
+				ret = std::move(*itr);
+				_connections.erase(itr);
+				return true;
+			}
+
+			return false;
+		}
+
+		bool remove(const ScopedConnectionRef &ref, ScopedConnectionRef &ret) {
+			auto itr = std::find(std::begin(_connections), std::end(_connections), ref);
+
+			if(itr != std::end(_connections)) {
+				ret = std::move(*itr);
+				_connections.erase(itr);
+				return true;
+			}
+
+			return false;
+		}
+
+		bool removeReleased(const ConnectionRef &ref, ConnectionRef &ret) {
+			auto itr = std::find(std::begin(_connections), std::end(_connections), ref);
+
+			if(itr != std::end(_connections)) {
+				ret = itr->release();
+				_connections.erase(itr);
+				return true;
+			}
+
+			return false;
+		}
+
+		bool removeReleased(const ScopedConnectionRef &ref, ConnectionRef &ret) {
+			auto itr = std::find(std::begin(_connections), std::end(_connections), ref);
+
+			if(itr != std::end(_connections)) {
+				ret = itr->release();
+				_connections.erase(itr);
+				return true;
+			}
+
+			return false;
 		}
 
 	private:
@@ -374,8 +483,8 @@ namespace Signal11 {
 
 			template<class T>
 			ConnectionRef connect(T &object, R(T::*method)(Args...)) {
-				CallbackFunction wrapper = [&object, method](Args... args) {
-					return (object.*method)(/*std::forward<Args>*/(args)...);
+				CallbackFunction wrapper = [&object, method](Args&&... args) -> R {
+					return (object.*method)(args...);
 				};
 
 				return connect(wrapper);
@@ -383,8 +492,8 @@ namespace Signal11 {
 
 			template<class T>
 			ConnectionRef connect(T *object, R(T::*method)(Args...)) {
-				CallbackFunction wrapper = [&object, method](Args... args) {
-					return (object->*method)(/*std::forward<Args>*/(args)...);
+				CallbackFunction wrapper = [&object, method](Args&&... args) -> R {
+					return (object->*method)(args...);
 				};
 
 				return connect(wrapper);

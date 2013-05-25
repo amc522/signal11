@@ -59,9 +59,14 @@ public:
 	sig1.emit (.5, 1, "12");
 
     Signal11::Signal<void (std::string, int)> sig2;
-	scope += sig2.connect([] (std::string msg, int) { accu += string_printf ("msg: %s", msg.c_str()); });
-	scope += sig2.connect([] (std::string, int d)   { accu += string_printf (" *%d*\n", d); });
+	Signal11::ScopedConnectionRef scoped1 = sig2.connect([] (std::string msg, int) { accu += string_printf ("msg: %s", msg.c_str()); });
+	{
+		Signal11::ConnectionRef scoped2 = scope += sig2.connect([] (std::string, int d)   { accu += string_printf (" *%d*\n", d); });
+		Signal11::ScopedConnectionRef scoped3 = sig2.connect([] (std::string, int d)   { accu += string_printf (" SHOULDN'T BE HERE", d); });
+		scope.removeReleased(scoped2, scoped2);
+	}
     sig2.emit ("in sig2", 17);
+
 
     accu += "DONE";
 
