@@ -78,10 +78,15 @@ namespace Signal11 {
 		};
 
 		struct ProtoSignalLink {
+			ProtoSignalLink()
+				:_enabled(true), _tempDisabled(false)
+			{
+			}
+
 			virtual bool removeSibling(ProtoSignalLink *link) = 0;
 
 			bool isEnabled() const {
-				return _enabled;
+				return _enabled && !_tempDisabled;
 			}
 
 			void enable() {
@@ -96,8 +101,13 @@ namespace Signal11 {
 				_enabled = flag;
 			}
 
+			void setTempDisabled(bool flag) {
+				_tempDisabled = flag;
+			}
+
 		protected:
 			bool _enabled;
+			bool _tempDisabled;
 		};
 	} // namespace Lib
 
@@ -114,6 +124,10 @@ namespace Signal11 {
 		{
 			std::swap(_head, other._head);
 			other._link = nullptr;
+		}
+
+		virtual ~ConnectionRef() {
+
 		}
 
 		ConnectionRef& operator=(ConnectionRef &&other) {
@@ -139,24 +153,41 @@ namespace Signal11 {
 		}
 
 		bool isEnabled() const {
-			return _link->isEnabled();
+			if(isValid()) {
+				return _link->isEnabled();
+			}
+
+			return false;
 		}
 
 		void enable() {
-			_link->enable();
+			if(isValid()) {
+				_link->enable();
+			}
 		}
 
 		void disable() {
-			_link->disable();
+			if(isValid()) {
+				_link->disable();
+			}
 		}
 
 		void setEnabled(bool flag) {
-			_link->setEnabled(flag);
+			if(isValid()) {
+				_link->setEnabled(flag);
+			}
 		}
+
+		bool isValid() const {
+			return !_head.expired() && _link != nullptr;
+		}
+
+	protected:
+		Lib::ProtoSignalLink *_link;
 
 	private:
 		std::weak_ptr<Lib::ProtoSignalLink> _head;
-		Lib::ProtoSignalLink *_link;
+		
 	};
 
 	class ScopedConnectionRef : public ConnectionRef {
@@ -202,7 +233,14 @@ namespace Signal11 {
 		ConnectionRef release() {
 			return std::move(static_cast<ConnectionRef&>(*this));
 		}
-		
+
+	protected:
+		friend class ConnectionScope;
+
+		void setTempDisabled(bool flag) {
+			_link->setTempDisabled(flag);
+		}
+
 	private:
 		ScopedConnectionRef(const ScopedConnectionRef &other)
 			:ConnectionRef(nullptr, nullptr)
@@ -212,6 +250,11 @@ namespace Signal11 {
 	
 	class ConnectionScope {
 	public:
+		ConnectionScope()
+			:_enabled(true)
+		{
+		}
+
 		ScopedConnectionRef& operator+=(const ConnectionRef &ref) {
 			return insert(ref);
 		}
@@ -317,8 +360,31 @@ namespace Signal11 {
 			return false;
 		}
 
+		bool isEnabled() const {
+			return _enabled;
+		}
+
+		void enable() {
+			setEnabled(true);
+		}
+
+		void disable() {
+			setEnabled(false);
+		}
+
+		void setEnabled(bool flag) {
+			if(flag && !_enabled || !flag && _enabled) {
+				for(auto &connection : _connections) {
+					connection.setTempDisabled(!flag);
+				}
+			}
+
+			_enabled = flag;
+		}
+
 	private:
 		std::vector<ScopedConnectionRef> _connections;
+		bool _enabled;
 	};
 
 	namespace Lib {

@@ -56,7 +56,10 @@ public:
 	scope += sig1.connect(foo, &Foo::foo_bool);
 	scope += sig1.connect(&foo, &Foo::foo_bool);
     
-	sig1.emit (.5, 1, "12");
+	scope.disable();
+	sig1.emit (1.5f, 15, "121");
+	scope.enable();
+	sig1.emit (0.5f, 1, "12");
 
     Signal11::Signal<void (std::string, int)> sig2;
 	Signal11::ScopedConnectionRef scoped1 = sig2.connect([] (std::string msg, int) { accu += string_printf ("msg: %s", msg.c_str()); });
@@ -66,7 +69,6 @@ public:
 		scope.removeReleased(scoped2, scoped2);
 	}
     sig2.emit ("in sig2", 17);
-
 
     accu += "DONE";
 
