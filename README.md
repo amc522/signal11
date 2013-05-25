@@ -20,6 +20,7 @@ Examples
 
 ###ConnectionRef
 ```c++
+using namespace Signal11;
 
 void myFunc(int i) {
     printf("myFunc called with %d\n", i);
