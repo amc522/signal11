@@ -4,6 +4,7 @@
 #include <functional>
 #include <vector>
 #include <assert.h>
+#include <memory>
 
 namespace Signal11 {
 
@@ -42,7 +43,7 @@ namespace Signal11 {
 
 		/// CollectorDefault implements the default signal handler collection behaviour.
 		template<typename Result>
-		class CollectorDefault : CollectorLast<Result>
+		class CollectorDefault : public CollectorLast<Result>
 		{};
 
 		/// CollectorDefault specialisation for signals with void return type.
@@ -76,7 +77,7 @@ namespace Signal11 {
 		};
 
 		struct ProtoSignalLink {
-			virtual bool remove() = 0;
+			virtual bool removeSibling(ProtoSignalLink *link) = 0;
 
 			bool isEnabled() const {
 				return _enabled;
@@ -101,8 +102,8 @@ namespace Signal11 {
 
 	class ConnectionRef {
 	public:
-		ConnectionRef(Lib::ProtoSignalLink *link)
-			:_link(link)
+		ConnectionRef(const std::shared_ptr<Lib::ProtoSignalLink> &head, Lib::ProtoSignalLink *link)
+			:_head(head), _link(link)
 		{
 			assert(link != nullptr);
 		}
@@ -110,21 +111,23 @@ namespace Signal11 {
 		ConnectionRef(ConnectionRef &&other)
 			:_link(std::move(other._link))
 		{
+			std::swap(_head, other._head);
 			other._link = nullptr;
 		}
 
 		ConnectionRef& operator=(ConnectionRef &&other) {
 			std::swap(_link, other._link);
+			std::swap(_head, other._head);
 
 			return *this;
 		}
 
 		bool disconnect() {
-			if(_link != nullptr) {
-				Lib::ProtoSignalLink *link = _link;
+			auto headPtr = _head.lock();
+			if(headPtr != nullptr) {
+				auto temp = _link;
 				_link = nullptr;
-				
-				return link->remove();
+				return headPtr->removeSibling(temp);
 			}
 
 			return false;
@@ -147,6 +150,7 @@ namespace Signal11 {
 		}
 
 	private:
+		std::weak_ptr<Lib::ProtoSignalLink> _head;
 		Lib::ProtoSignalLink *_link;
 	};
 
@@ -179,7 +183,7 @@ namespace Signal11 {
 		
 	private:
 		ScopedConnectionRef(const ScopedConnectionRef &other)
-			:ConnectionRef(nullptr)
+			:ConnectionRef(nullptr, nullptr)
 		{}
 		ScopedConnectionRef& operator=(const ScopedConnectionRef &other) { return *this; }
 	};
@@ -241,11 +245,13 @@ namespace Signal11 {
 					assert(_refCount > 0);
 				}
 
-				void decref() {
+				void decref(bool performDelete = true) {
 					_refCount -= 1;
 					
 					if(_refCount == 0) {
-						delete this;
+						if(performDelete) {
+							delete this;
+						}
 					} else {
 						assert(_refCount > 0);
 					}
@@ -296,7 +302,7 @@ namespace Signal11 {
 					return false;
 				}
 
-				bool removeSibling(SignalLink *id) {
+				bool removeSibling(ProtoSignalLink *id) {
 					SignalLink *link = this->_next ? this->_next : this;
 
 					for(; link != this; link = link->_next) {
@@ -308,24 +314,16 @@ namespace Signal11 {
 					
 					return false;
 				}
-
-				bool remove() {
-					if(!this->_next) {
-						return false;
-					}
-
-					return this->_next->removeSibling(this);
-				}
 			};
 
-			SignalLink *_callbackRing; // linked ring of callback nodes
+			std::shared_ptr<SignalLink> _callbackRing; // linked ring of callback nodes
 			
 			void ensureRing() {
 				if(!_callbackRing) {
-					_callbackRing = new SignalLink(CallbackFunction()); // refCount = 1
+					_callbackRing = std::make_shared<SignalLink>(CallbackFunction()); // refCount = 1
 					_callbackRing->incref(); // refCount = 2, head of ring, can be deactivated but not removed
-					_callbackRing->_next = _callbackRing; // ring head initialization
-					_callbackRing->_prev = _callbackRing; // ring tail initialization
+					_callbackRing->_next = _callbackRing.get(); // ring head initialization
+					_callbackRing->_prev = _callbackRing.get(); // ring tail initialization
 				}
 			}
 
@@ -352,13 +350,13 @@ namespace Signal11 {
 			/// ProtoSignal destructor releases all resources associated with this signal.
 			~ProtoSignal() {
 				if (_callbackRing) {
-					while(_callbackRing->_next != _callbackRing) {
+					while(_callbackRing->_next != _callbackRing.get()) {
 						_callbackRing->_next->unlink();
 					}
 
 					assert(_callbackRing->_refCount >= 2);
 					_callbackRing->decref();
-					_callbackRing->decref();
+					_callbackRing->decref(false);
 				}
 			}
 
@@ -371,13 +369,13 @@ namespace Signal11 {
 			/// Operator to add a new function or lambda as signal handler, returns a handler connection ID.
 			ConnectionRef connect(const CallbackFunction &callback) {
 				ensureRing();
-				return ConnectionRef(_callbackRing->addBefore(callback));
+				return ConnectionRef(_callbackRing, _callbackRing->addBefore(callback));
 			}
 
 			template<class T>
 			ConnectionRef connect(T &object, R(T::*method)(Args...)) {
 				CallbackFunction wrapper = [&object, method](Args... args) {
-					return (object.*method)(std::forward<Args>(args)...);
+					return (object.*method)(/*std::forward<Args>*/(args)...);
 				};
 
 				return connect(wrapper);
@@ -386,7 +384,7 @@ namespace Signal11 {
 			template<class T>
 			ConnectionRef connect(T *object, R(T::*method)(Args...)) {
 				CallbackFunction wrapper = [&object, method](Args... args) {
-					return (object->*method)(std::forward<Args>(args)...);
+					return (object->*method)(/*std::forward<Args>*/(args)...);
 				};
 
 				return connect(wrapper);
@@ -413,7 +411,7 @@ namespace Signal11 {
 					return collector.result();
 				}
 
-				SignalLink *link = _callbackRing;
+				SignalLink *link = _callbackRing.get();
 				link->incref();
 
 				do {
@@ -431,7 +429,7 @@ namespace Signal11 {
 					old->decref();
 				}
 
-				while (link != _callbackRing);
+				while (link != _callbackRing.get());
 				
 				link->decref();
 				return collector.result();
