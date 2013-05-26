@@ -113,6 +113,11 @@ namespace Signal11 {
 
 	class ConnectionRef {
 	public:
+		ConnectionRef()
+			:_link(nullptr)
+		{
+		}
+
 		ConnectionRef(const std::shared_ptr<Lib::ProtoSignalLink> &head, Lib::ProtoSignalLink *link)
 			:_head(head), _link(link)
 		{
@@ -558,7 +563,7 @@ namespace Signal11 {
 
 			template<class T>
 			ConnectionRef connect(T *object, R(T::*method)(Args...)) {
-				CallbackFunction wrapper = [&object, method](Args&&... args) -> R {
+				CallbackFunction wrapper = [object, method](Args&&... args) -> R {
 					return (object->*method)(args...);
 				};
 
