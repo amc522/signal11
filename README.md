@@ -90,10 +90,6 @@ Output:
 myFunc called with 808<br/>
 myOtherFunc called with 808<br/>
 
-Todo
-----
-* Ability to disable a ```ConnectionScope```. When reenabling a ```ConnectionScope```, the previous enabled state of the connection is restored.
-
 License
 -------
 http://creativecommons.org/publicdomain/zero/1.0/
